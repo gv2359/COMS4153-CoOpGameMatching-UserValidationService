@@ -1,16 +1,12 @@
 from fastapi import FastAPI, HTTPException, Header
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import create_engine, Column, String, UniqueConstraint, exc
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 import bcrypt
-import uuid
 import jwt
 import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-import mysql.connector
-from mysql.connector import Error
+from models import UserInfo, UserRegister, UserLogin, LoginResponse, MessageResponse, ErrorResponse, Base, ValidateTokenResponse
 
 load_dotenv()
 
@@ -27,70 +23,28 @@ JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your_jwt_secret_key")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
-Base = declarative_base()
+# Database setup
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-class UserInfo(Base):
-    __tablename__ = 'user_info'
-    __table_args__ = (UniqueConstraint('emailId', name='uq_email'),)
-
-    userId = Column(String(36), primary_key=True, default=str(uuid.uuid4()))  # Specify length
-    userName = Column(String(50), nullable=False)  # Specify length
-    emailId = Column(String(100), unique=True, nullable=False)  # Specify length
-    hashedPassword = Column(String(128), nullable=False)  # Specify length
-    accessToken = Column(String(256), nullable=True)  # Specify length
-
-# Function to create database if it doesn't exist
-def create_database_if_not_exists():
-    try:
-        connection = mysql.connector.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
-        cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-        cursor.close()
-        connection.close()
-    except Error as e:
-        print(f"Error creating database: {e}")
-
 # Create tables at startup if they don't exist
-def create_tables():
-    Base.metadata.create_all(bind=engine)
-
-# Initialize the database and create tables
-create_database_if_not_exists()
-create_tables()
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-class UserRegister(BaseModel):
-    userName: str
-    emailId: EmailStr
-    password: str
-
-class UserLogin(BaseModel):
-    emailId: EmailStr
-    password: str
-
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + (expires_delta if expires_delta else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
-@app.post("/register")
+@app.post("/register", response_model=MessageResponse, responses={400: {"model": ErrorResponse}})
 async def register(user: UserRegister):
-    db: Session = SessionLocal()
+    db = SessionLocal()
     existing_user = db.query(UserInfo).filter(UserInfo.emailId == user.emailId).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
     new_user = UserInfo(
         userName=user.userName,
@@ -101,39 +55,34 @@ async def register(user: UserRegister):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
+
     return {"message": "User registered successfully"}
 
-@app.post("/login")
+@app.post("/login", response_model=LoginResponse, responses={400: {"model": ErrorResponse}})
 async def login(user: UserLogin):
-    db: Session = SessionLocal()
+    db = SessionLocal()
     existing_user = db.query(UserInfo).filter(UserInfo.emailId == user.emailId).first()
     if not existing_user or not bcrypt.checkpw(user.password.encode('utf-8'), existing_user.hashedPassword.encode('utf-8')):
-        raise HTTPException(status_code=400, detail="Invalid credentials")
+        raise HTTPException(status_code=400, detail="Invalid email or password")
 
-    # Create access token with expiration
     access_token = create_access_token(data={"sub": existing_user.userId})
     existing_user.accessToken = access_token
     db.commit()
 
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/logout")
+@app.post("/logout", response_model=MessageResponse, responses={401: {"model": ErrorResponse}})
 async def logout(authorization: str = Header(...)):
-    # Extract the token from the header
     token = authorization.split(" ")[1]  # Bearer <token>
-
     try:
-        # Decode the token to get user ID
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")  # Extract user ID from the payload
+        user_id = payload.get("sub")
 
-        db: Session = SessionLocal()
+        db = SessionLocal()
         existing_user = db.query(UserInfo).filter(UserInfo.userId == user_id).first()
         if not existing_user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Invalidate the access token
         existing_user.accessToken = None
         db.commit()
         return {"message": "Successfully logged out"}
@@ -143,34 +92,27 @@ async def logout(authorization: str = Header(...)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-@app.post("/validate-token")
+@app.post("/validate-token", response_model=ValidateTokenResponse, responses={401: {"model": ErrorResponse}})
 async def validate_token(authorization: str = Header(...)):
-    # Extract token from the Authorization header
     token = authorization.split(" ")[1]  # Bearer <token>
-    
     try:
-        # Decode the token to get user ID
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")  # Extract user ID from the payload
+        user_id = payload.get("sub")
 
-        # Check if the user and token are valid in the database
-        db: Session = SessionLocal()
+        db = SessionLocal()
         user = db.query(UserInfo).filter(UserInfo.userId == user_id).first()
 
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        if user.accessToken != token:
+        if not user or user.accessToken != token:
             raise HTTPException(status_code=401, detail="Token is invalid or expired")
 
-        # If valid, return the user ID
-        return {"user_id": user.userId}
+          # If valid, return the user ID and user name
+        return {"user_id": user.userId, "userName": user.userName}
 
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-@app.get("/health")
+@app.get("/health", response_model=MessageResponse)
 async def health_check():
-    return {"status": "UserValidationService is running"}
+    return {"message": "UserValidationService is running"}
