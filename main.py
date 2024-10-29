@@ -80,8 +80,8 @@ async def logout(authorization: str = Header(...)):
 
         db = SessionLocal()
         existing_user = db.query(UserInfo).filter(UserInfo.userId == user_id).first()
-        if not existing_user:
-            raise HTTPException(status_code=404, detail="User not found")
+        if not existing_user or existing_user.accessToken != token:
+            raise HTTPException(status_code=404, detail="Token is invalid or expired")
 
         existing_user.accessToken = None
         db.commit()
