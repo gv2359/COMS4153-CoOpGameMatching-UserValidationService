@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 import bcrypt
 import jwt
 import os
+import pymysql
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from models import UserInfo, UserRegister, UserLogin, LoginResponse, MessageResponse, ErrorResponse, Base, ValidateTokenResponse
@@ -17,6 +18,23 @@ DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "dbuserdbuser")
 DB_NAME = os.getenv("DB_NAME", "user")
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# First, connect without specifying a database
+connection = pymysql.connect(
+    host=DB_HOST,
+    user=DB_USER,
+    password=DB_PASSWORD,
+    port=int(DB_PORT),
+    autocommit=True
+)
+
+# Create the database if it doesn't exist
+try:
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
+    print(f"Database '{DB_NAME}' created successfully (if it didn't already exist).")
+finally:
+    connection.close()
 
 # JWT configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your_jwt_secret_key")
