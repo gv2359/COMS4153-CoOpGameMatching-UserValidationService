@@ -1,15 +1,19 @@
 from fastapi import FastAPI, HTTPException, Header
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-import bcrypt
 import jwt
 import os
 import pymysql
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from models import UserInfo, UserRegister, UserLogin, LoginResponse, MessageResponse, ErrorResponse, Base, ValidateTokenResponse
+from models import UserInfo, LoginResponse, MessageResponse, ErrorResponse, Base, ValidateTokenResponse
+from firebase_admin import auth, credentials, initialize_app
 
 load_dotenv()
+
+# Firebase Admin SDK Initialization
+cred = credentials.Certificate(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"))
+initialize_app(cred)
 
 # Database configuration from environment variables
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -56,38 +60,41 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
-@app.post("/register", response_model=MessageResponse, responses={400: {"model": ErrorResponse}})
-async def register(user: UserRegister):
+@app.post("/login-google", response_model=LoginResponse, responses={400: {"model": ErrorResponse}})
+async def login_google(authorization: str = Header(...)):
+    """
+    Handle login using Firebase ID Token.
+    """
     db = SessionLocal()
-    existing_user = db.query(UserInfo).filter(UserInfo.emailId == user.emailId).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    id_token = authorization.split(" ")[1]  # Extract Firebase ID token
+    try:
+        # Verify Firebase ID Token
+        decoded_token = auth.verify_id_token(id_token)
+        print(decoded_token)
+        email = decoded_token["email"]
+        name = decoded_token.get("name", "User")
 
-    hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
-    new_user = UserInfo(
-        userName=user.userName,
-        emailId=user.emailId,
-        hashedPassword=hashed_password.decode('utf-8'),
-        accessToken=None
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+        # Check if the user exists in the database
+        user = db.query(UserInfo).filter(UserInfo.emailId == email).first()
 
-    return {"message": "User registered successfully"}
+        if not user:
+            # Register a new user
+            user = UserInfo(userName=name, emailId=email, accessToken=None, role="user")
+            db.add(user)
 
-@app.post("/login", response_model=LoginResponse, responses={400: {"model": ErrorResponse}})
-async def login(user: UserLogin):
-    db = SessionLocal()
-    existing_user = db.query(UserInfo).filter(UserInfo.emailId == user.emailId).first()
-    if not existing_user or not bcrypt.checkpw(user.password.encode('utf-8'), existing_user.hashedPassword.encode('utf-8')):
-        raise HTTPException(status_code=400, detail="Invalid email or password")
+        # Create custom JWT
+        access_token = create_access_token({"sub": user.userId, "role": user.role})
 
-    access_token = create_access_token(data={"sub": existing_user.userId})
-    existing_user.accessToken = access_token
-    db.commit()
+        # Update existing user's access token
+        user.accessToken = access_token
 
-    return {"access_token": access_token, "token_type": "bearer"}
+        db.commit()
+        db.refresh(user)
+
+        return {"access_token": access_token, "token_type": "bearer"}
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Login failed: {str(e)}")
 
 @app.post("/logout", response_model=MessageResponse, responses={401: {"model": ErrorResponse}})
 async def logout(authorization: str = Header(...)):
@@ -116,6 +123,7 @@ async def validate_token(authorization: str = Header(...)):
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
+        role = payload.get("role")
 
         db = SessionLocal()
         user = db.query(UserInfo).filter(UserInfo.userId == user_id).first()
@@ -124,7 +132,7 @@ async def validate_token(authorization: str = Header(...)):
             raise HTTPException(status_code=401, detail="Token is invalid or expired")
 
           # If valid, return the user ID and user name
-        return {"user_id": user.userId, "userName": user.userName}
+        return {"user_id": user.userId, "userName": user.userName, "role": user.role}
 
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")

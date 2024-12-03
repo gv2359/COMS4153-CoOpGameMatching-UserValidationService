@@ -9,3 +9,4 @@ pymysql
 PyJWT
 pydantic[email]
 mysql-connector-python
+firebase_admin
