@@ -6,13 +6,14 @@ import uuid
 Base = declarative_base()
 class UserInfo(Base):
     __tablename__ = 'user_info'
-    __table_args__ = (UniqueConstraint('emailId', name='uq_email'),)
+    __table_args__ = (UniqueConstraint('email', name='uq_email'),)
 
     userId = Column(String(36), primary_key=True, default=str(uuid.uuid4()))
     userName = Column(String(50), nullable=False)
-    emailId = Column(String(100), unique=True, nullable=False)
-    accessToken = Column(String(256), nullable=True)  # Store the custom JWT token
-    role = Column(String(50), default="user")  # Optional: role management
+    email = Column(String(100), unique=True, nullable=False)
+    accessToken = Column(String(256), nullable=True)  
+    steamId = Column(String(100), nullable=True)
+    role = Column(String(50), nullable=False)
 
 class LoginResponse(BaseModel):
     access_token: str

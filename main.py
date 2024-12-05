@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from models import UserInfo, LoginResponse, MessageResponse, ErrorResponse, Base, ValidateTokenResponse
 from firebase_admin import auth, credentials, initialize_app
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -32,13 +33,13 @@ connection = pymysql.connect(
     autocommit=True
 )
 
-# Create the database if it doesn't exist
-try:
-    with connection.cursor() as cursor:
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-    print(f"Database '{DB_NAME}' created successfully (if it didn't already exist).")
-finally:
-    connection.close()
+# # Create the database if it doesn't exist
+# try:
+#     with connection.cursor() as cursor:
+#         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
+#     print(f"Database '{DB_NAME}' created successfully (if it didn't already exist).")
+# finally:
+#     connection.close()
 
 # JWT configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your_jwt_secret_key")
@@ -53,6 +54,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+# Need this for CORS otherwise the frontend won't be able to access the API locally, comment out for cloud
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"],  
+)
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
@@ -70,16 +80,14 @@ async def login_google(authorization: str = Header(...)):
     try:
         # Verify Firebase ID Token
         decoded_token = auth.verify_id_token(id_token)
-        print(decoded_token)
+        # print(decoded_token)
         email = decoded_token["email"]
         name = decoded_token.get("name", "User")
-
         # Check if the user exists in the database
-        user = db.query(UserInfo).filter(UserInfo.emailId == email).first()
-
+        user = db.query(UserInfo).filter(UserInfo.email == email).first()
         if not user:
             # Register a new user
-            user = UserInfo(userName=name, emailId=email, accessToken=None, role="user")
+            user = UserInfo(userName=name, email=email, accessToken=None, role="user")
             db.add(user)
 
         # Create custom JWT
@@ -94,6 +102,7 @@ async def login_google(authorization: str = Header(...)):
         return {"access_token": access_token, "token_type": "bearer"}
 
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail=f"Login failed: {str(e)}")
 
 @app.post("/logout", response_model=MessageResponse, responses={401: {"model": ErrorResponse}})
@@ -116,6 +125,8 @@ async def logout(authorization: str = Header(...)):
         raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        print(e)
 
 @app.post("/validate-token", response_model=ValidateTokenResponse, responses={401: {"model": ErrorResponse}})
 async def validate_token(authorization: str = Header(...)):
