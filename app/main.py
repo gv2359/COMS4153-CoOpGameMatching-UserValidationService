@@ -28,4 +28,4 @@ async def health():
     return {"message": "Service is up and running"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, port=8000)
+    uvicorn.run(app, port=8001)
