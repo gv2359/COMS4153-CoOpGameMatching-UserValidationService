@@ -1,13 +1,13 @@
-from typing import Any
+
 import os
 import jwt
 
 from framework.exceptions.user_token_exceptions import TokenExpiredException, TokenNotValidException
 from framework.resources.base_resource import BaseResource
-import uuid
+
 from app.models.UserLogin import LoginResponse, MessageResponse, UserInfoResponse
-from firebase_admin import auth, credentials, initialize_app
-from datetime import datetime, timedelta
+from firebase_admin import auth, credentials, initialize_app, _apps
+
 
 from app.services.service_factory import ServiceFactory
 
@@ -31,8 +31,9 @@ class UserLoginResource(BaseResource):
         self.ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
         # Firebase Admin SDK Initialization
-        cred = credentials.Certificate(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"))
-        initialize_app(cred)
+        if not _apps:
+            cred = credentials.Certificate(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"))
+            initialize_app(cred)
 
 
     def login(self, id_token):
@@ -42,15 +43,13 @@ class UserLoginResource(BaseResource):
         email = decoded_token["email"]
         name = decoded_token.get("name", "User")
         role = "user"
-        user_id = str(uuid.uuid4())
 
-        access_token = self.create_access_token({"sub":user_id,"role":id_token})
-        user = self.data_service.create_user(email, name, user_id, access_token)
+        user = self.data_service.create_user(name, email, role)
 
         if not user:
             raise Exception("User not found")
 
-        login_response = LoginResponse(access_token=access_token, token_type="bearer")
+        login_response = LoginResponse(access_token=user.accessToken, token_type="bearer")
         return login_response
 
     def logout(self, access_token):
@@ -78,7 +77,6 @@ class UserLoginResource(BaseResource):
             payload = jwt.decode(access_token, self.JWT_SECRET_KEY, algorithms=[self.ALGORITHM])
             user_id = payload.get("sub")
             role = payload.get("role")
-
             user = self.data_service.get_user(user_id)
 
             if not user or user.accessToken != access_token:
@@ -93,11 +91,6 @@ class UserLoginResource(BaseResource):
             raise TokenNotValidException(message="Invalid token")
 
 
-    def create_access_token(self, data: dict, expires_delta: timedelta = None):
-        to_encode = data.copy()
-        expire = datetime.utcnow() + (
-            expires_delta if expires_delta else timedelta(minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES))
-        to_encode.update({"exp": expire})
-        return jwt.encode(to_encode, self.JWT_SECRET_KEY, algorithm=self.ALGORITHM)
+
 
 
