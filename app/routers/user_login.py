@@ -4,7 +4,7 @@ from app.services.service_factory import ServiceFactory
 from framework.exceptions.user_token_exceptions import TokenExpiredException, TokenNotValidException
 
 router = APIRouter()
-
+res = ServiceFactory.get_service("UserLoginResource")
 @router.post("/login-google", response_model=LoginResponse, responses={400: {"model": ErrorResponse}})
 async def login_google(authorization: str = Header(...)):
     """
@@ -12,7 +12,7 @@ async def login_google(authorization: str = Header(...)):
     """
     try:
         id_token = authorization.split(" ")[1]  # Extract Firebase ID token
-        res = ServiceFactory.get_service("UserLoginResource")
+
         login_response = res.login(id_token)
 
         return login_response
@@ -26,7 +26,6 @@ async def logout(authorization: str = Header(...)):
 
     try:
         token = authorization.split(" ")[1]  # Bearer <token>
-        res = ServiceFactory.get_service("UserLoginResource")
         message_response = res.logout(token)
 
         return message_response
@@ -44,7 +43,6 @@ async def validate_token(authorization: str = Header(...)):
 
     try:
         token = authorization.split(" ")[1]  # Bearer <token>
-        res = ServiceFactory.get_service("UserLoginResource")
         user_info = res.validate_token(token)
 
         return user_info

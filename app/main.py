@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.resources.user_login_resource import UserLoginResource
 
+# it loads from the .env file
+load_dotenv()
 
 from app.routers import user_login
 
@@ -18,8 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# it loads from the .env file
-load_dotenv()
 
 app.include_router(user_login.router)
 
